@@ -1,0 +1,15 @@
+name: "LibreLogin"
+authors: [ "sapphirecode", "Navio1430", "kyngs" ]
+version: '${version}'
+main: "xyz.kyngs.librelogin.paper.PaperBootstrap"
+api-version: 1.13
+
+softdepend:
+  - ProtocolLib
+  - ProtocolSupport
+  - ViaVersion
+  - ViaBackwards
+  - ViaRewind
+  - Geyser-Spigot
+  - floodgate
+  - LuckPerms
