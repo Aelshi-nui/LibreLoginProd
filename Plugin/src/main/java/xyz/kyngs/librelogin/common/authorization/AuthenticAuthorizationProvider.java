@@ -66,6 +66,7 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
 
     public void onExit(P player) {
         stopTracking(player);
+        platformHandle.unprotectLoginLocation(player);
         awaiting2FA.remove(player);
         emailConfirmCache.invalidate(platformHandle.getUUIDForPlayer(player));
         passwordResetCache.invalidate(platformHandle.getUUIDForPlayer(player));
@@ -87,6 +88,7 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
             throw new IllegalStateException("Player is already authorized");
         }
         stopTracking(player);
+        platformHandle.unprotectLoginLocation(player);
 
         user.setLastAuthentication(Timestamp.valueOf(LocalDateTime.now()));
         user.setIp(platformHandle.getIP(player));
@@ -118,6 +120,7 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
         var audience = platformHandle.getAudienceForPlayer(player);
 
         unAuthorized.put(player, user.isRegistered());
+        platformHandle.protectLoginLocation(player);
 
         plugin.cancelOnExit(
                 plugin.delay(
@@ -215,10 +218,14 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
 
     public void beginTwoFactorAuth(User user, P player, TOTPData data) {
         awaiting2FA.put(player, data.secret());
+        platformHandle.protectLoginLocation(player);
 
         var limbo = plugin.getServerHandler().chooseLimboServer(user, player);
 
         if (limbo == null) {
+            if (platformHandle.usesLoginLocationProtection()) {
+                return;
+            }
             platformHandle.kick(player, plugin.getMessages().getMessage("kick-no-limbo"));
             return;
         }

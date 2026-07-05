@@ -38,12 +38,18 @@ import xyz.kyngs.librelogin.paper.protocol.PacketListener;
 public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
 
     private final PaperBootstrap bootstrap;
+    private final FoliaLoginProtection loginProtection;
     private PaperListeners listeners;
     private boolean started;
+    private boolean packetEventsCleanedUp;
+    private boolean commonCleanedUp;
 
     public PaperLibreLogin(PaperBootstrap bootstrap) {
         this.bootstrap = bootstrap;
+        this.loginProtection = new FoliaLoginProtection(this);
         this.started = false;
+        this.packetEventsCleanedUp = false;
+        this.commonCleanedUp = false;
 
         PacketEvents.setAPI(SpigotPacketEventsBuilder.build(bootstrap));
 
@@ -52,12 +58,14 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
                 //                .debug(true)
                 .checkForUpdates(false)
                 .bStats(false);
-
-        PacketEvents.getAPI().load();
     }
 
     public PaperBootstrap getBootstrap() {
         return bootstrap;
+    }
+
+    public FoliaLoginProtection getLoginProtection() {
+        return loginProtection;
     }
 
     @Override
@@ -119,9 +127,12 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
 
     @Override
     protected void disable() {
-        PacketEvents.getAPI().terminate();
-        if (getDatabaseProvider() == null) return; // Not initialized
+        started = false;
+        loginProtection.unprotectAll();
+        terminatePacketEvents();
+        if (getDatabaseProvider() == null || commonCleanedUp) return; // Not initialized
 
+        commonCleanedUp = true;
         super.disable();
     }
 
@@ -178,6 +189,14 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
             return;
         }
 
+        try {
+            startPacketEvents();
+        } catch (RuntimeException e) {
+            getLogger().error("Failed to initialize PacketEvents, disabling LibreLogin", e);
+            disable();
+            return;
+        }
+
         var provider = getEventProvider();
 
         provider.subscribe(
@@ -185,7 +204,11 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
                 event -> {
                     var player = event.getPlayer();
                     if (player == null) return;
-                    player.setInvisible(false);
+                    if (PaperScheduler.FOLIA) {
+                        loginProtection.unprotect(player);
+                    } else {
+                        PaperUtil.runForPlayer(player, () -> player.setInvisible(false), this);
+                    }
                 });
 
         listeners = new PaperListeners(this);
@@ -197,8 +220,79 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
         started = true;
     }
 
+    private void startPacketEvents() {
+        var api = PacketEvents.getAPI();
+        if (!api.isLoaded()) {
+            api.load();
+            preloadPacketEventsConnectionClasses();
+        }
+        if (!api.isInitialized()) {
+            api.init();
+        }
+        packetEventsCleanedUp = false;
+    }
+
+    private void terminatePacketEvents() {
+        if (packetEventsCleanedUp) {
+            return;
+        }
+
+        try {
+            var api = PacketEvents.getAPI();
+
+            if (api.isInitialized()) {
+                api.terminate();
+            } else if (api.isLoaded()) {
+                api.getInjector().uninject();
+                api.getEventManager().unregisterAllListeners();
+            }
+        } catch (Throwable throwable) {
+            if (logger != null) {
+                logger.warn("Failed to clean up PacketEvents injection", throwable);
+            } else {
+                bootstrap
+                        .getSLF4JLogger()
+                        .warn("Failed to clean up PacketEvents injection", throwable);
+            }
+        } finally {
+            packetEventsCleanedUp = true;
+        }
+    }
+
+    private void preloadPacketEventsConnectionClasses() {
+        var classLoader = PaperLibreLogin.class.getClassLoader();
+        var classNames =
+                new String[] {
+                    "io.github.retrooper.packetevents.injector.connection.ServerChannelHandler",
+                    "io.github.retrooper.packetevents.injector.connection.PreChannelInitializer_v1_12",
+                    "io.github.retrooper.packetevents.injector.connection.PreChannelInitializer_v1_8",
+                    "io.github.retrooper.packetevents.injector.connection.PreChannelInitializer_v1_8$1",
+                    "io.github.retrooper.packetevents.injector.connection.ServerConnectionInitializer",
+                    "io.github.retrooper.packetevents.injector.handlers.PacketEventsDecoder",
+                    "io.github.retrooper.packetevents.injector.handlers.PacketEventsEncoder"
+                };
+
+        try {
+            for (var className : classNames) {
+                Class.forName(className, true, classLoader);
+            }
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("Failed to preload PacketEvents connection classes", e);
+        }
+    }
+
     @Override
     public void authorize(Player player, User user, Audience audience) {
+        if (PaperScheduler.FOLIA) {
+            // On Folia, every access to the player (reads, visibility, teleport) must happen on the
+            // region thread that owns the player.
+            PaperUtil.runForPlayer(player, () -> authorizeNow(player, user), this);
+        } else {
+            authorizeNow(player, user);
+        }
+    }
+
+    private void authorizeNow(Player player, User user) {
         try {
 
             var location = listeners.getSpawnLocationCache().getIfPresent(player.getUniqueId());
@@ -236,11 +330,23 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
             }
 
             var finalLocation = location;
-            PaperUtil.runSyncAndWait(() -> {
+
+            if (PaperScheduler.FOLIA) {
+                // Already running on the player's region thread.
                 // Restore visibility — Blockers.onJoin sets invisible=true for limbo players
                 player.setInvisible(false);
                 player.teleportAsync(finalLocation);
-            }, this);
+            } else {
+                PaperUtil.runForPlayer(
+                        player,
+                        () -> {
+                            // Restore visibility — Blockers.onJoin sets invisible=true for limbo
+                            // players
+                            player.setInvisible(false);
+                            player.teleportAsync(finalLocation);
+                        },
+                        this);
+            }
 
         } catch (EventCancelledException ignored) {
         }
@@ -248,19 +354,12 @@ public class PaperLibreLogin extends AuthenticLibreLogin<Player, World> {
 
     @Override
     public CancellableTask delay(Runnable runnable, long delayInMillis) {
-        var task =
-                Bukkit.getScheduler()
-                        .runTaskLaterAsynchronously(bootstrap, runnable, delayInMillis / 50);
-        return task::cancel;
+        return PaperScheduler.runAsyncDelayed(bootstrap, runnable, delayInMillis);
     }
 
     @Override
     public CancellableTask repeat(Runnable runnable, long delayInMillis, long repeatInMillis) {
-        var task =
-                Bukkit.getScheduler()
-                        .runTaskTimerAsynchronously(
-                                bootstrap, runnable, delayInMillis / 50, repeatInMillis / 50);
-        return task::cancel;
+        return PaperScheduler.runAsyncRepeating(bootstrap, runnable, delayInMillis, repeatInMillis);
     }
 
     @Override

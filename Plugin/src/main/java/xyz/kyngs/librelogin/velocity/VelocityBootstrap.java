@@ -28,8 +28,8 @@ import xyz.kyngs.librelogin.api.LibreLoginPlugin;
 import xyz.kyngs.librelogin.api.provider.LibreLoginProvider;
 
 @Plugin(
-        id = "librelogin",
-        name = "LibreLogin",
+        id = "libreloginx",
+        name = "LibreLoginX",
         version = "@version@",
         // TODO: Update authors
         authors = "sapphirecode",
@@ -61,7 +61,7 @@ public class VelocityBootstrap implements LibreLoginProvider<Player, RegisteredS
         var libraryManager =
                 new VelocityLibraryManager<>(
                         logger,
-                        Path.of("plugins", "librelogin"),
+                        Path.of("plugins", "libreloginx"),
                         server.getPluginManager(),
                         new PluginContainer() {
                             @Override

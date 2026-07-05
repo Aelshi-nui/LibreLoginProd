@@ -2,7 +2,7 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
     id("java")
-    id("io.github.goooler.shadow") version "8.1.8"
+    id("com.gradleup.shadow") version "8.3.11"
     id("net.kyori.blossom").version("1.3.1")
     id("java-library")
     id("xyz.kyngs.libby.plugin").version("1.2.1")
@@ -33,7 +33,7 @@ blossom {
 tasks.withType<ShadowJar> {
     destinationDirectory.set(file("../target"))
 
-    archiveBaseName.set("LibreLoginProd")
+    archiveBaseName.set("LibreLoginX")
     archiveClassifier = null
 
     dependencies {
@@ -61,7 +61,7 @@ tasks.withType<ShadowJar> {
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
 
@@ -137,8 +137,8 @@ dependencies {
     libby("org.bstats:bstats-bukkit:3.1.0")
 
     //Paper
-    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
-    implementation("com.github.retrooper:packetevents-spigot:2.11.0")
+    compileOnly("io.papermc.paper:paper-api:26.1.2.build.72-stable")
+    implementation("com.github.retrooper:packetevents-spigot:2.13.0")
     compileOnly("org.apache.logging.log4j:log4j-core:2.25.1")
 
     //Libby

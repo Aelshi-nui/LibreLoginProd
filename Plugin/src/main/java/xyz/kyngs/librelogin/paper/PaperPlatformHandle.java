@@ -42,13 +42,30 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
 
     @Override
     public CompletableFuture<Throwable> movePlayer(Player player, World to) {
-        return player.teleportAsync(to.getSpawnLocation())
-                .thenApply(success -> success ? null : new RuntimeException("Unknown cause"));
+        var result = new CompletableFuture<Throwable>();
+        PaperUtil.runForPlayer(
+                player,
+                () ->
+                        player.teleportAsync(to.getSpawnLocation())
+                                .whenComplete(
+                                        (success, throwable) -> {
+                                            if (throwable != null) {
+                                                result.complete(throwable);
+                                            } else {
+                                                result.complete(
+                                                        success
+                                                                ? null
+                                                                : new RuntimeException(
+                                                                        "Unknown cause"));
+                                            }
+                                        }),
+                plugin);
+        return result;
     }
 
     @Override
     public void kick(Player player, Component reason) {
-        PaperUtil.runSyncAndWait(() -> player.kick(reason), plugin);
+        PaperUtil.runForPlayer(player, () -> player.kick(reason), plugin);
     }
 
     @Override
@@ -57,6 +74,10 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
 
         if (world != null) return world;
 
+        if (PaperScheduler.FOLIA && limbo) {
+            return null;
+        }
+
         var file = new File(name);
         var exists = file.exists();
 
@@ -64,6 +85,27 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
             plugin.getLogger().info("Found world file for " + name + ", loading...");
         } else {
             plugin.getLogger().info("World file for " + name + " not found, creating...");
+        }
+
+        if (PaperScheduler.FOLIA) {
+            if (exists) {
+                plugin.getLogger()
+                        .warn(
+                                "World "
+                                        + name
+                                        + " exists, but Folia does not support loading worlds at"
+                                        + " runtime. Load it before startup or use an already"
+                                        + " loaded world in LibreLogin's configuration.");
+            } else {
+                plugin.getLogger()
+                        .warn(
+                                "World "
+                                        + name
+                                        + " does not exist, and Folia does not support creating"
+                                        + " worlds at runtime. Create/load it before startup or use"
+                                        + " an already loaded world in LibreLogin's configuration.");
+            }
+            return null;
         }
 
         var creator = new WorldCreator(name);
@@ -106,6 +148,21 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
         }
 
         return world;
+    }
+
+    @Override
+    public boolean usesLoginLocationProtection() {
+        return PaperScheduler.FOLIA;
+    }
+
+    @Override
+    public void protectLoginLocation(Player player) {
+        plugin.getLoginProtection().protect(player);
+    }
+
+    @Override
+    public void unprotectLoginLocation(Player player) {
+        plugin.getLoginProtection().unprotect(player);
     }
 
     @Override

@@ -6,29 +6,16 @@
 
 package xyz.kyngs.librelogin.paper;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 
 public class PaperUtil {
 
-    public static void runSyncAndWait(Runnable runnable, PaperLibreLogin plugin) {
-        if (Bukkit.isPrimaryThread()) {
-            runnable.run();
-        } else {
-            var future = new CompletableFuture<Void>();
-            Bukkit.getScheduler()
-                    .runTask(
-                            plugin.getBootstrap(),
-                            () -> {
-                                runnable.run();
-                                future.complete(null);
-                            });
-            try {
-                future.get();
-            } catch (InterruptedException | ExecutionException e) {
-                throw new RuntimeException(e);
-            }
-        }
+    /**
+     * Runs a task that operates on the given player on the correct thread. On Folia this is the
+     * player's owning region thread; on regular Paper it is the main server thread. This must be
+     * used for any access to a player's state (teleporting, kicking, visibility, etc.).
+     */
+    public static void runForPlayer(Player player, Runnable runnable, PaperLibreLogin plugin) {
+        PaperScheduler.runForEntity(plugin.getBootstrap(), player, runnable);
     }
 }

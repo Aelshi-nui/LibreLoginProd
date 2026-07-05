@@ -17,6 +17,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
@@ -113,7 +114,19 @@ public class Blockers implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
+    public void onDamageByEntity(EntityDamageByEntityEvent event) {
+        if (event.getDamager() instanceof Player player) {
+            cancelIfNeeded(player, event);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
     public void onInteract(PlayerInteractEvent event) {
+        cancelIfNeeded(event);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onInteractEntity(PlayerInteractEntityEvent event) {
         cancelIfNeeded(event);
     }
 
@@ -147,6 +160,21 @@ public class Blockers implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onDrop(PlayerDropItemEvent event) {
+        cancelIfNeeded(event);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onPickup(PlayerAttemptPickupItemEvent event) {
+        cancelIfNeeded(event);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onConsume(PlayerItemConsumeEvent event) {
+        cancelIfNeeded(event);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onSwapHands(PlayerSwapHandItemsEvent event) {
         cancelIfNeeded(event);
     }
 

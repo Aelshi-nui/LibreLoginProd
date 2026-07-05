@@ -196,7 +196,7 @@ public class AuthenticPremiumProvider implements PremiumProvider {
                 case 400 -> {
                     return null;
                 }
-                case 500 ->
+                case 500, 503 ->
                         throw new PremiumException(
                                 PremiumException.Issue.SERVER_EXCEPTION,
                                 GeneralUtil.readInput(connection.getErrorStream()));
@@ -205,6 +205,8 @@ public class AuthenticPremiumProvider implements PremiumProvider {
                                 PremiumException.Issue.UNDEFINED,
                                 GeneralUtil.readInput(connection.getErrorStream()));
             }
+        } catch (SocketTimeoutException te) {
+            throw new PremiumException(PremiumException.Issue.SERVER_EXCEPTION, te);
         } catch (IOException e) {
             throw new PremiumException(PremiumException.Issue.SERVER_EXCEPTION, e);
         }

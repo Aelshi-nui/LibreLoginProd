@@ -71,6 +71,12 @@ public class AuthenticServerHandler<P, S> implements ServerHandler<P, S> {
             var server = handle.getServer(limbo, true);
             if (server != null) {
                 registerLimboServer(server);
+            } else if (handle.usesLoginLocationProtection()) {
+                plugin.getLogger()
+                        .warn(
+                                "Limbo server/world "
+                                        + limbo
+                                        + " not found! Falling back to login-location protection.");
             } else {
                 plugin.getLogger().warn("Limbo server/world " + limbo + " not found!");
             }

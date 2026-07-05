@@ -67,6 +67,31 @@ public interface PlatformHandle<P, S> {
     S getServer(String name, boolean limbo);
 
     /**
+     * Whether this platform can protect unauthenticated players at their login location when no
+     * limbo server/world is registered.
+     *
+     * @return true if login-location protection is available as a fallback
+     */
+    default boolean usesLoginLocationProtection() {
+        return false;
+    }
+
+    /**
+     * Applies platform-specific protection for a player who is not allowed to interact normally at
+     * their current login location.
+     *
+     * @param player the player to protect
+     */
+    default void protectLoginLocation(P player) {}
+
+    /**
+     * Removes protection applied by {@link #protectLoginLocation(Object)}.
+     *
+     * @param player the player to restore
+     */
+    default void unprotectLoginLocation(P player) {}
+
+    /**
      * Retrieves the class of the {@link S} type
      *
      * @return the class of the {@link S} type

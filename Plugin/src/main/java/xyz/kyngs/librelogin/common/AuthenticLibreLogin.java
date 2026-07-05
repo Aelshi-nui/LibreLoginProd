@@ -13,8 +13,6 @@ import co.aikar.commands.CommandManager;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import java.io.*;
 import java.net.URL;
 import java.nio.file.Files;
@@ -45,7 +43,6 @@ import xyz.kyngs.librelogin.api.premium.PremiumException;
 import xyz.kyngs.librelogin.api.premium.PremiumUser;
 import xyz.kyngs.librelogin.api.server.ServerHandler;
 import xyz.kyngs.librelogin.api.totp.TOTPProvider;
-import xyz.kyngs.librelogin.api.util.Release;
 import xyz.kyngs.librelogin.api.util.SemanticVersion;
 import xyz.kyngs.librelogin.api.util.ThrowableFunction;
 import xyz.kyngs.librelogin.common.authorization.AuthenticAuthorizationProvider;
@@ -356,8 +353,6 @@ public abstract class AuthenticLibreLogin<P, S> implements LibreLoginPlugin<P, S
         } else {
             initMetrics();
         }
-
-        delay(this::checkForUpdates, 1000);
 
         if (pluginPresent("floodgate")) {
             logger.info("Floodgate detected, enabling bedrock support...");
@@ -729,64 +724,6 @@ public abstract class AuthenticLibreLogin<P, S> implements LibreLoginPlugin<P, S
                 }
                 forbiddenPasswords.add(line.toUpperCase(Locale.ROOT));
             }
-        }
-    }
-
-    private void checkForUpdates() {
-        logger.info("Checking for updates...");
-
-        try {
-            var connection =
-                    new URL("https://api.github.com/repos/Navio1430/LibreLoginProd/releases")
-                            .openConnection();
-
-            connection.setRequestProperty("User-Agent", "LibreLogin");
-
-            var in = connection.getInputStream();
-
-            var root = GSON.fromJson(new InputStreamReader(in), JsonArray.class);
-
-            in.close(); // Not the safest way, but a slight leak isn't a big deal
-
-            List<Release> behind = new ArrayList<>();
-            SemanticVersion latest = null;
-
-            for (JsonElement raw : root) {
-                var release = raw.getAsJsonObject();
-
-                var version = SemanticVersion.parse(release.get("tag_name").getAsString());
-
-                if (latest == null) latest = version;
-
-                var shouldBreak =
-                        switch (this.version.compare(version)) {
-                            case 0, 1 -> true;
-                            default -> {
-                                behind.add(new Release(version, release.get("name").getAsString()));
-                                yield false;
-                            }
-                        };
-
-                if (shouldBreak) {
-                    break;
-                }
-            }
-
-            if (behind.isEmpty()) {
-                logger.info("You are running the latest version of LibreLogin");
-            } else {
-                Collections.reverse(behind);
-                logger.warn("!! YOU ARE RUNNING AN OUTDATED VERSION OF LIBRELOGIN !!");
-                logger.info(
-                        "You are running version %s, the latest version is %s. You are running %s versions behind. Newer versions:"
-                                .formatted(getVersion(), latest, behind.size()));
-                for (Release release : behind) {
-                    logger.info("- %s".formatted(release.name()));
-                }
-                logger.warn("!! PLEASE UPDATE TO THE LATEST VERSION !!");
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to check for updates", e);
         }
     }
 

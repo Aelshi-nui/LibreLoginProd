@@ -108,9 +108,31 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
         return spawnLocationCache;
     }
 
+    /**
+     * Kicks the player with the given UUID (if currently online) on the correct thread for both
+     * Paper and Folia. Used from asynchronous login handling where a direct kick is not possible.
+     */
+    private void kickByUuid(UUID uuid, Component reason) {
+        PaperScheduler.runGlobal(
+                plugin.getBootstrap(),
+                () -> {
+                    var p = plugin.getPlayerForUUID(uuid);
+                    if (p != null) {
+                        PaperScheduler.runForEntity(
+                                plugin.getBootstrap(), p, () -> p.kick(reason));
+                    }
+                });
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
+        plugin.getLoginProtection().unprotectNow(event.getPlayer());
         GeneralUtil.runAsync(() -> onPlayerDisconnect(event.getPlayer()));
+    }
+
+    @EventHandler
+    public void onKick(PlayerKickEvent event) {
+        plugin.getLoginProtection().unprotectNow(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -145,7 +167,8 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
             } catch (Exception ignored) {
             }
             if (data == null) {
-                player.kick(Component.text("Internal error, please try again later."));
+                plugin.getPlatformHandle()
+                        .kick(player, Component.text("Internal error, please try again later."));
                 return;
             }
         }
@@ -160,6 +183,11 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
         }
 
         onPostLogin(player, data);
+        if (PaperScheduler.FOLIA
+                && (!plugin.getAuthorizationProvider().isAuthorized(player)
+                        || plugin.getAuthorizationProvider().isAwaiting2FA(player))) {
+            plugin.getLoginProtection().protectNow(player);
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -189,6 +217,11 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
     public void chooseWorld(AsyncPlayerSpawnLocationEvent event) {
         var puuid = event.getConnection().getProfile().getId();
 
+        if (PaperScheduler.FOLIA && plugin.getServerHandler().getLimboServers().isEmpty()) {
+            ipCache.invalidate(puuid);
+            return;
+        }
+
         // Skip processing for Floodgate (Bedrock) players - let them through normally
         if (plugin.fromFloodgate(puuid)) {
             return;
@@ -205,18 +238,8 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
             } catch (Exception ignored) {
             }
             if (ip == null) {
-                Bukkit.getScheduler()
-                        .runTask(
-                                plugin.getBootstrap(),
-                                () -> {
-                                    var p = plugin.getPlayerForUUID(puuid);
-                                    if (p != null) {
-                                        p.kick(
-                                                Component.text(
-                                                        "Internal error, please try again"
-                                                                + " later."));
-                                    }
-                                });
+                kickByUuid(
+                        puuid, Component.text("Internal error, please try again later."));
                 return;
             }
         }
@@ -224,21 +247,10 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
         var world = chooseServer(puuid, ip, readOnlyUserCache.getIfPresent(puuid));
         ipCache.invalidate(puuid);
         if (world.value() == null) {
-            Bukkit.getScheduler()
-                    .runTask(
-                            plugin.getBootstrap(),
-                            () -> {
-                                var p = plugin.getPlayerForUUID(puuid);
-                                if (p != null) {
-                                    p.kick(
-                                            plugin.getMessages()
-                                                    .getMessage(
-                                                            "kick-no-"
-                                                                    + (world.key()
-                                                                            ? "lobby"
-                                                                            : "limbo")));
-                                }
-                            });
+            kickByUuid(
+                    puuid,
+                    plugin.getMessages()
+                            .getMessage("kick-no-" + (world.key() ? "lobby" : "limbo")));
         } else {
             Function<World, Boolean> isLimbo =
                     (w) ->
