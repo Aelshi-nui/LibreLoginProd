@@ -74,12 +74,12 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
 
     @Override
     public boolean isAuthorized(P player) {
-        return !unAuthorized.containsKey(player);
+        return !containsPlayer(unAuthorized, player);
     }
 
     @Override
     public boolean isAwaiting2FA(P player) {
-        return awaiting2FA.containsKey(player);
+        return containsPlayer(awaiting2FA, player);
     }
 
     @Override
@@ -88,6 +88,7 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
             throw new IllegalStateException("Player is already authorized");
         }
         stopTracking(player);
+        removePlayer(awaiting2FA, player);
         platformHandle.unprotectLoginLocation(player);
 
         user.setLastAuthentication(Timestamp.valueOf(LocalDateTime.now()));
@@ -107,7 +108,7 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
 
     @Override
     public boolean confirmTwoFactorAuth(P player, Integer code, User user) {
-        var secret = awaiting2FA.get(player);
+        var secret = getPlayerValue(awaiting2FA, player);
         if (plugin.getTOTPProvider().verify(code, secret)) {
             user.setSecret(secret);
             plugin.getDatabaseProvider().updateUser(user);
@@ -194,7 +195,32 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
     }
 
     public void stopTracking(P player) {
-        unAuthorized.remove(player);
+        removePlayer(unAuthorized, player);
+    }
+
+    private boolean containsPlayer(Map<P, ?> map, P player) {
+        return getPlayerValue(map, player) != null;
+    }
+
+    private <T> T getPlayerValue(Map<P, T> map, P player) {
+        var direct = map.get(player);
+        if (direct != null) return direct;
+
+        var uuid = platformHandle.getUUIDForPlayer(player);
+        for (var entry : map.entrySet()) {
+            if (uuid.equals(platformHandle.getUUIDForPlayer(entry.getKey()))) {
+                return entry.getValue();
+            }
+        }
+
+        return null;
+    }
+
+    private void removePlayer(Map<P, ?> map, P player) {
+        map.remove(player);
+
+        var uuid = platformHandle.getUUIDForPlayer(player);
+        map.keySet().removeIf(stored -> uuid.equals(platformHandle.getUUIDForPlayer(stored)));
     }
 
     public void notifyUnauthorized() {

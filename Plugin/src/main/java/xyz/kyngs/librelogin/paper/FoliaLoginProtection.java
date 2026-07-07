@@ -31,6 +31,11 @@ public final class FoliaLoginProtection {
 
     public void protectNow(Player player) {
         if (!PaperScheduler.FOLIA) return;
+        if (plugin.getAuthorizationProvider().isAuthorized(player)
+                && !plugin.getAuthorizationProvider().isAwaiting2FA(player)) {
+            clearProtection(player);
+            return;
+        }
 
         protectedPlayers.computeIfAbsent(player.getUniqueId(), ignored -> State.capture(player));
         player.setInvulnerable(true);
@@ -56,15 +61,28 @@ public final class FoliaLoginProtection {
         if (!PaperScheduler.FOLIA) return;
 
         var state = protectedPlayers.remove(player.getUniqueId());
-        if (state == null) return;
+        if (state == null || state.matchesLoginProtection()) {
+            clearProtection(player);
+            return;
+        }
 
         player.setInvulnerable(state.invulnerable());
         player.setCollidable(state.collidable());
         player.setInvisible(state.invisible());
+        player.setNoDamageTicks(0);
         player.removePotionEffect(PotionEffectType.BLINDNESS);
         if (state.blindness() != null) {
             player.addPotionEffect(state.blindness());
         }
+    }
+
+    private void clearProtection(Player player) {
+        protectedPlayers.remove(player.getUniqueId());
+        player.setInvulnerable(false);
+        player.setCollidable(true);
+        player.setInvisible(false);
+        player.setNoDamageTicks(0);
+        player.removePotionEffect(PotionEffectType.BLINDNESS);
     }
 
     public void unprotectAll() {
@@ -89,6 +107,10 @@ public final class FoliaLoginProtection {
                     player.isCollidable(),
                     player.isInvisible(),
                     player.getPotionEffect(PotionEffectType.BLINDNESS));
+        }
+
+        private boolean matchesLoginProtection() {
+            return invulnerable && !collidable && invisible && blindness != null;
         }
     }
 }

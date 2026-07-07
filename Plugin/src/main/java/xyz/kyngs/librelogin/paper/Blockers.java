@@ -153,7 +153,7 @@ public class Blockers implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onJoin(PlayerJoinEvent event) {
-        if (inLimbo(event.getPlayer())) {
+        if (!PaperScheduler.FOLIA && inLimbo(event.getPlayer())) {
             event.getPlayer().setInvisible(true);
         }
     }
