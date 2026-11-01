@@ -19,7 +19,7 @@ import com.github.retrooper.packetevents.wrapper.login.client.WrapperLoginClient
 import com.github.retrooper.packetevents.wrapper.login.client.WrapperLoginClientLoginStart;
 import com.github.retrooper.packetevents.wrapper.login.server.WrapperLoginServerDisconnect;
 import com.github.retrooper.packetevents.wrapper.login.server.WrapperLoginServerEncryptionRequest;
-import io.github.retrooper.packetevents.util.SpigotReflectionUtil;
+import io.netty.channel.Channel;
 import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
 import java.io.IOException;
 import java.lang.reflect.Method;
@@ -82,7 +82,7 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
 
     private final KeyPair keyPair = EncryptionUtil.generateKeyPair();
     private final Random random = new SecureRandom();
-    private final Cache<String, EncryptionData> encryptionDataCache =
+    private final Cache<Object, EncryptionData> encryptionDataCache =
             Caffeine.newBuilder().expireAfterWrite(2, TimeUnit.MINUTES).build();
     private final FloodgateHelper floodgateHelper;
     private final Cache<UUID, String> ipCache;
@@ -118,8 +118,7 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
                 () -> {
                     var p = plugin.getPlayerForUUID(uuid);
                     if (p != null) {
-                        PaperScheduler.runForEntity(
-                                plugin.getBootstrap(), p, () -> p.kick(reason));
+                        PaperScheduler.runForEntity(plugin.getBootstrap(), p, () -> p.kick(reason));
                     }
                 });
     }
@@ -177,7 +176,9 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
         if (player.isDead()) {
             // Preserve spawn location cache - don't invalidate it here
             // It will be used after respawn in onPlayerRespawn
-            player.spigot().respawn();
+            if (!PaperScheduler.FOLIA) {
+                player.spigot().respawn();
+            }
         } else {
             joinedWhileDead.invalidate(puuid);
         }
@@ -238,8 +239,7 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
             } catch (Exception ignored) {
             }
             if (ip == null) {
-                kickByUuid(
-                        puuid, Component.text("Internal error, please try again later."));
+                kickByUuid(puuid, Component.text("Internal error, please try again later."));
                 return;
             }
         }
@@ -305,7 +305,7 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
 
         if (type == PacketType.Login.Client.LOGIN_START) {
             var packet = new WrapperLoginClientLoginStart(event);
-            var sessionKey = user.getAddress().toString();
+            var sessionKey = event.getChannel();
 
             encryptionDataCache.invalidate(sessionKey);
 
@@ -401,7 +401,7 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
             var packet = new WrapperLoginClientEncryptionResponse(event);
             var sharedSecret = packet.getEncryptedSharedSecret();
 
-            var data = encryptionDataCache.getIfPresent(user.getAddress().toString());
+            var data = encryptionDataCache.asMap().remove(event.getChannel());
 
             if (data == null) {
                 kickPlayer("Illegal encryption state", user);
@@ -445,12 +445,15 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
                     receiveFakeStartPacket(
                             username, data.publicKey(), event.getChannel(), data.uuid());
                 } else {
+                    plugin.getLogger().warn("Mojang rejected the premium session for " + username);
                     kickPlayer("Invalid session", user);
                 }
             } catch (IOException e) {
                 if (e instanceof SocketTimeoutException) {
                     plugin.getLogger()
                             .warn("Session verification timed out (5 seconds) for " + username);
+                } else {
+                    plugin.getLogger().warn("Session verification failed for " + username, e);
                 }
                 kickPlayer("Cannot verify session", user);
             }
@@ -466,6 +469,19 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
                 () -> {
                     try {
                         asyncPacketReceive(copy);
+                    } catch (Throwable throwable) {
+                        plugin.getLogger()
+                                .error(
+                                        "Failed to process "
+                                                + copy.getPacketType()
+                                                + " during login for "
+                                                + copy.getUser().getAddress(),
+                                        throwable);
+                        try {
+                            kickPlayer("Internal login error", copy.getUser());
+                        } catch (Throwable kickFailure) {
+                            throwable.addSuppressed(kickFailure);
+                        }
                     } finally {
                         copy.cleanUp();
                     }
@@ -526,10 +542,15 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
         conn.connect();
         int responseCode = conn.getResponseCode();
         conn.disconnect();
-        // Only treat HTTP 200 as verified. 204 = no match, anything else = error.
-        // Previously this used "!= 204" which meant server errors (500, 429, etc.)
-        // would be treated as successful verification - a critical auth bypass.
-        return responseCode == 200;
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            return true;
+        }
+        if (responseCode == HttpURLConnection.HTTP_NO_CONTENT) {
+            return false;
+        }
+
+        // Never treat rate limits or server errors as successful authentication.
+        throw new IOException("Mojang session server returned HTTP " + responseCode);
     }
 
     /**
@@ -540,101 +561,135 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
             com.github.retrooper.packetevents.protocol.player.User user,
             Object channel)
             throws IllegalArgumentException {
-        // Initialize method reflections
-        if (encryptMethod == null) {
-            var managers = SpigotReflectionUtil.getNetworkManagers();
-            if (managers == null || managers.isEmpty()) {
-                kickPlayer("Cannot find network manager class", user);
+        try {
+            Object networkManager = ProtocolUtil.findNetworkManager(channel);
+
+            if (networkManager == null) {
+                plugin.getLogger()
+                        .error(
+                                "Could not find the active network connection for premium login "
+                                        + user.getAddress());
+                kickPlayer("Internal login error", user);
                 return false;
             }
-            Class<?> networkManagerClass = managers.get(0).getClass();
 
-            // Try multiple method names used across different MC versions
-            // 1.21.11+ uses setupEncryption(SecretKey)
-            encryptMethod =
-                    Reflection.getMethod(networkManagerClass, "setupEncryption", SecretKey.class);
-
+            initializeEncryptionMethods(networkManager.getClass());
             if (encryptMethod == null) {
-                // Try setEncryptionKey(SecretKey) - used in some versions
-                encryptMethod =
+                plugin.getLogger()
+                        .error(
+                                "Could not find an encryption method on "
+                                        + networkManager.getClass().getName());
+                kickPlayer("Internal login error", user);
+                return false;
+            }
+
+            if (channel instanceof Channel nettyChannel
+                    && !nettyChannel.eventLoop().inEventLoop()) {
+                var future =
+                        nettyChannel
+                                .eventLoop()
+                                .submit(
+                                        () -> {
+                                            try {
+                                                enableEncryptionNow(networkManager, loginKey);
+                                            } catch (ReflectiveOperationException
+                                                    | GeneralSecurityException e) {
+                                                throw new IllegalStateException(e);
+                                            }
+                                        });
+                future.syncUninterruptibly();
+            } else {
+                enableEncryptionNow(networkManager, loginKey);
+            }
+        } catch (Exception ex) {
+            plugin.getLogger()
+                    .error(
+                            "Could not enable premium-login encryption for " + user.getAddress(),
+                            ex);
+            kickPlayer("Internal login error", user);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void initializeEncryptionMethods(Class<?> networkManagerClass) {
+        if (encryptMethod != null) return;
+
+        synchronized (PaperListeners.class) {
+            if (encryptMethod != null) return;
+
+            Method method =
+                    Reflection.getMethod(networkManagerClass, "setupEncryption", SecretKey.class);
+            if (method == null) {
+                method =
                         Reflection.getMethod(
                                 networkManagerClass, "setEncryptionKey", SecretKey.class);
             }
-
-            if (encryptMethod == null) {
-                // Try encrypt(SecretKey) - another variant
-                encryptMethod =
-                        Reflection.getMethod(networkManagerClass, "encrypt", SecretKey.class);
+            if (method == null) {
+                method = Reflection.getMethod(networkManagerClass, "encrypt", SecretKey.class);
             }
 
-            if (encryptMethod == null) {
-                // Get the 1.16.4-1.21.0 cipher-based encryption method
-                encryptMethod =
+            if (method == null) {
+                for (var candidate : networkManagerClass.getDeclaredMethods()) {
+                    if (java.util.Arrays.equals(
+                            candidate.getParameterTypes(), new Class<?>[] {SecretKey.class})) {
+                        candidate.setAccessible(true);
+                        method = candidate;
+                        break;
+                    }
+                }
+            }
+
+            Method helper = null;
+            if (method == null) {
+                method =
                         Reflection.getMethod(
                                 networkManagerClass,
                                 "setEncryptionKey",
                                 Cipher.class,
                                 Cipher.class);
+                if (method == null) {
+                    for (var candidate : networkManagerClass.getDeclaredMethods()) {
+                        if (java.util.Arrays.equals(
+                                candidate.getParameterTypes(),
+                                new Class<?>[] {Cipher.class, Cipher.class})) {
+                            candidate.setAccessible(true);
+                            method = candidate;
+                            break;
+                        }
+                    }
+                }
 
-                // Get the needed Cipher helper method (used to generate ciphers from login key)
-                if (ENCRYPTION_CLASS != null) {
-                    cipherMethod =
-                            Reflection.getMethod(ENCRYPTION_CLASS, "a", int.class, Key.class);
-                    if (cipherMethod == null) {
-                        // Try alternative method names for the cipher helper
-                        cipherMethod =
+                if (method != null && ENCRYPTION_CLASS != null) {
+                    helper = Reflection.getMethod(ENCRYPTION_CLASS, "a", int.class, Key.class);
+                    if (helper == null) {
+                        helper =
                                 Reflection.getMethod(
                                         ENCRYPTION_CLASS, "getCipher", int.class, Key.class);
                     }
                 }
             }
 
-            if (encryptMethod == null) {
-                // Last resort: scan all methods that take a SecretKey parameter
-                for (var method : networkManagerClass.getDeclaredMethods()) {
-                    var params = method.getParameterTypes();
-                    if (params.length == 1 && params[0] == SecretKey.class) {
-                        encryptMethod = method;
-                        encryptMethod.setAccessible(true);
-                        break;
-                    }
-                }
-            }
+            cipherMethod = helper;
+            encryptMethod = method;
+        }
+    }
+
+    private static void enableEncryptionNow(Object networkManager, SecretKey loginKey)
+            throws ReflectiveOperationException, GeneralSecurityException {
+        if (encryptMethod.getParameterCount() == 1) {
+            encryptMethod.invoke(networkManager, loginKey);
+            return;
         }
 
-        if (encryptMethod == null) {
-            kickPlayer("Couldn't find encryption method", user);
-            return false;
+        if (cipherMethod == null) {
+            throw new GeneralSecurityException("Could not find the server cipher factory");
         }
 
-        try {
-            Object networkManager = ProtocolUtil.findNetworkManager(channel);
-
-            if (networkManager == null) {
-                kickPlayer("Couldn't find network manager", user);
-                return false;
-            }
-
-            // If cipherMethod is null - use direct SecretKey encryption, otherwise use the cipher
-            // method
-            if (cipherMethod == null) {
-                // Encrypt/decrypt packet flow, this behaviour is expected by the client
-                encryptMethod.invoke(networkManager, loginKey);
-            } else {
-                // Create ciphers from login key
-                Object decryptionCipher = cipherMethod.invoke(null, Cipher.DECRYPT_MODE, loginKey);
-                Object encryptionCipher = cipherMethod.invoke(null, Cipher.ENCRYPT_MODE, loginKey);
-
-                // Encrypt/decrypt packet flow, this behaviour is expected by the client
-                encryptMethod.invoke(networkManager, decryptionCipher, encryptionCipher);
-            }
-        } catch (Exception ex) {
-            kickPlayer("Couldn't enable encryption", user);
-            ex.printStackTrace();
-            return false;
-        }
-
-        return true;
+        Object decryptionCipher = cipherMethod.invoke(null, Cipher.DECRYPT_MODE, loginKey);
+        Object encryptionCipher = cipherMethod.invoke(null, Cipher.ENCRYPT_MODE, loginKey);
+        encryptMethod.invoke(networkManager, decryptionCipher, encryptionCipher);
     }
 
     private void kickPlayer(
@@ -646,12 +701,22 @@ public class PaperListeners extends AuthenticListeners<PaperLibreLogin, Player, 
             Component reason, com.github.retrooper.packetevents.protocol.player.User player) {
         // Cannot use Player#kick(Component) because it doesn't work in the login state
         var kickPacket = new WrapperLoginServerDisconnect(reason);
+        var channel = player.getChannel();
         try {
             // send kick packet at login state
-            PacketEvents.getAPI().getProtocolManager().sendPacket(player.getChannel(), kickPacket);
+            PacketEvents.getAPI().getProtocolManager().sendPacket(channel, kickPacket);
         } finally {
-            // tell the server that we want to close the connection
-            player.closeConnection();
+            // Queue the close after the packet write on the same event loop. Closing immediately
+            // can discard the reason and leave the client with only a generic "Disconnected".
+            if (channel instanceof Channel nettyChannel) {
+                try {
+                    nettyChannel.eventLoop().execute(player::closeConnection);
+                } catch (RuntimeException ignored) {
+                    player.closeConnection();
+                }
+            } else {
+                player.closeConnection();
+            }
         }
     }
 

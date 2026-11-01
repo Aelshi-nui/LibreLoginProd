@@ -41,6 +41,8 @@ public final class FoliaLoginProtection {
         player.setInvulnerable(true);
         player.setCollidable(false);
         player.setInvisible(true);
+        player.setAllowFlight(true);
+        player.setFlying(true);
         player.setFireTicks(0);
         player.addPotionEffect(
                 new PotionEffect(
@@ -69,6 +71,7 @@ public final class FoliaLoginProtection {
         player.setInvulnerable(state.invulnerable());
         player.setCollidable(state.collidable());
         player.setInvisible(state.invisible());
+        restoreFlight(player, state);
         player.setNoDamageTicks(0);
         player.removePotionEffect(PotionEffectType.BLINDNESS);
         if (state.blindness() != null) {
@@ -81,8 +84,21 @@ public final class FoliaLoginProtection {
         player.setInvulnerable(false);
         player.setCollidable(true);
         player.setInvisible(false);
+        player.setFlying(false);
+        player.setAllowFlight(false);
         player.setNoDamageTicks(0);
         player.removePotionEffect(PotionEffectType.BLINDNESS);
+    }
+
+    private void restoreFlight(Player player, State state) {
+        if (!state.allowFlight()) {
+            player.setFlying(false);
+            player.setAllowFlight(false);
+            return;
+        }
+
+        player.setAllowFlight(true);
+        player.setFlying(state.flying());
     }
 
     public void unprotectAll() {
@@ -99,18 +115,30 @@ public final class FoliaLoginProtection {
     }
 
     private record State(
-            boolean invulnerable, boolean collidable, boolean invisible, PotionEffect blindness) {
+            boolean invulnerable,
+            boolean collidable,
+            boolean invisible,
+            boolean allowFlight,
+            boolean flying,
+            PotionEffect blindness) {
 
         private static State capture(Player player) {
             return new State(
                     player.isInvulnerable(),
                     player.isCollidable(),
                     player.isInvisible(),
+                    player.getAllowFlight(),
+                    player.isFlying(),
                     player.getPotionEffect(PotionEffectType.BLINDNESS));
         }
 
         private boolean matchesLoginProtection() {
-            return invulnerable && !collidable && invisible && blindness != null;
+            return invulnerable
+                    && !collidable
+                    && invisible
+                    && allowFlight
+                    && flying
+                    && blindness != null;
         }
     }
 }

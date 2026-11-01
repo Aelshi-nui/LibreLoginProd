@@ -30,8 +30,24 @@ public class ProtocolUtil {
     }
 
     public static Object findNetworkManager(Object channel) {
+        if (!(channel instanceof Channel targetChannel)) {
+            return null;
+        }
+
+        // The active NMS Connection is itself a channel handler. Looking it up from the channel is
+        // both exact and compatible with Folia 26.x, where PacketEvents' global connection-list
+        // reflection can return an empty list.
+        for (var handlerName : targetChannel.pipeline().names()) {
+            var handler = targetChannel.pipeline().get(handlerName);
+            if (handler != null && NETWORK_MANAGER_CLASS.isInstance(handler)) {
+                return handler;
+            }
+        }
+
         var managers = SpigotReflectionUtil.getNetworkManagers();
-        Channel targetChannel = (Channel) channel;
+        if (managers == null || managers.isEmpty()) {
+            return null;
+        }
 
         // First pass: try exact channel identity match (most reliable)
         for (Object manager : managers) {
