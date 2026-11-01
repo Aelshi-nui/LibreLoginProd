@@ -28,8 +28,11 @@ import xyz.kyngs.librelogin.common.util.GeneralUtil;
 public class AuthenticPremiumProvider implements PremiumProvider {
 
     private final Cache<String, PremiumUser> userCache;
-    private final List<ThrowableFunction<String, PremiumUser, PremiumException>> fetchers;
+    private final List<Fetcher> fetchers;
     private final AuthenticLibreLogin<?, ?> plugin;
+
+    private record Fetcher(
+            String name, ThrowableFunction<String, PremiumUser, PremiumException> lookup) {}
 
     public AuthenticPremiumProvider(AuthenticLibreLogin<?, ?> plugin) {
         this.plugin = plugin;
@@ -37,10 +40,11 @@ public class AuthenticPremiumProvider implements PremiumProvider {
 
         fetchers = new ArrayList<>(3);
 
-        fetchers.add(this::getUserFromMojang);
-        fetchers.add(this::getUserFromPlayerDB);
-        fetchers.add(this::getUserFromMinetools);
-        // fetchers.add(this::getUserFromAshcon); //Momentarily disabled, as it's unreliable. See
+        fetchers.add(new Fetcher("Mojang", this::getUserFromMojang));
+        fetchers.add(new Fetcher("PlayerDB", this::getUserFromPlayerDB));
+        fetchers.add(new Fetcher("Minetools", this::getUserFromMinetools));
+        // fetchers.add(new Fetcher("Ashcon", this::getUserFromAshcon));
+        // Momentarily disabled, as it's unreliable. See
         // https://github.com/Electroid/mojang-api/issues/79
     }
 
@@ -59,38 +63,12 @@ public class AuthenticPremiumProvider implements PremiumProvider {
                                 var fetcher = fetchers.get(i);
 
                                 try {
-                                    return fetcher.apply(x);
+                                    return fetcher.lookup().apply(x);
                                 } catch (PremiumException e) {
                                     if (i == fetchers.size() - 1) {
                                         exceptionToThrow[0] = e;
-                                    } else if (e.getIssue()
-                                            == PremiumException.Issue.SERVER_EXCEPTION) {
-                                        plugin.getLogger()
-                                                .warn(
-                                                        "Got a server exception while fetching"
-                                                            + " premium user. Falling back to an"
-                                                            + " alternative API. Player's"
-                                                            + " information's might not be"
-                                                            + " up-to-date.",
-                                                        e);
-                                    } else if (e.getIssue() == PremiumException.Issue.THROTTLED) {
-                                        plugin.getLogger()
-                                                .warn(
-                                                        "Your IP has been rate limited while"
-                                                            + " fetching premium user. Falling back"
-                                                            + " to an alternative API. Player's"
-                                                            + " information's might not be"
-                                                            + " up-to-date.",
-                                                        e);
                                     } else {
-                                        plugin.getLogger()
-                                                .warn(
-                                                        "Got unexpected exception while fetching"
-                                                            + " premium user. Falling back to an"
-                                                            + " alternative API. Player's"
-                                                            + " information's might not be"
-                                                            + " up-to-date.",
-                                                        e);
+                                        logFallback(fetcher, fetchers.get(i + 1), e);
                                     }
                                 } catch (RuntimeException e) {
                                     plugin.getLogger()
@@ -114,6 +92,40 @@ public class AuthenticPremiumProvider implements PremiumProvider {
         }
 
         return result;
+    }
+
+    private void logFallback(Fetcher failed, Fetcher next, PremiumException e) {
+        var reason =
+                switch (e.getIssue()) {
+                    case THROTTLED -> "rate limited or timed out";
+                    case SERVER_EXCEPTION -> "server error";
+                    case UNDEFINED -> "unexpected error";
+                };
+        var message =
+                failed.name()
+                        + " API lookup failed ("
+                        + reason
+                        + ": "
+                        + summarize(e)
+                        + "). Falling back to "
+                        + next.name()
+                        + ", player information might not be up-to-date.";
+
+        if (e.getIssue() == PremiumException.Issue.UNDEFINED) {
+            plugin.getLogger().warn(message, e);
+        } else {
+            // Expected network conditions; the stack trace only adds noise to the console.
+            plugin.getLogger().warn(message);
+            plugin.getLogger().debug(failed.name() + " API lookup failure details", e);
+        }
+    }
+
+    private static String summarize(PremiumException e) {
+        var message = e.getMessage();
+        if (message == null || message.isBlank()) return e.getIssue().name();
+        // Error bodies can be whole HTML pages (e.g. Cloudflare), keep the console readable.
+        message = message.replaceAll("\\s+", " ").trim();
+        return message.length() > 200 ? message.substring(0, 200) + "..." : message;
     }
 
     private PremiumUser getUserFromAshcon(String name) throws PremiumException {

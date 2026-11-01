@@ -188,7 +188,9 @@ public class AuthenticAuthorizationProvider<P, S> extends AuthenticHandler<P, S>
                                 .getMessage(registered ? "title-login" : "title-register"),
                         plugin.getMessages()
                                 .getMessage(registered ? "sub-title-login" : "sub-title-register"),
-                        Title.Times.of(
+                        // Title.Times.of was removed in Adventure 5 (Paper 26.2); times() exists
+                        // in both Adventure 4.x and 5.x.
+                        Title.Times.times(
                                 Duration.ofMillis(0),
                                 Duration.ofMillis(toRefresh > 0 ? (long) (toRefresh * 1.1) : 10000),
                                 Duration.ofMillis(0))));

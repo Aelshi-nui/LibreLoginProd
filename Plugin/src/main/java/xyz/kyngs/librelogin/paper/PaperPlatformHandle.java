@@ -11,6 +11,7 @@ import static xyz.kyngs.librelogin.paper.protocol.ProtocolUtil.getServerVersion;
 import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.google.common.base.MoreObjects;
 import java.io.File;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.UUID;
@@ -78,8 +79,8 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
             return null;
         }
 
-        var file = new File(name);
-        var exists = file.exists();
+        var creator = new WorldCreator(name);
+        var exists = worldDataExists(creator);
 
         if (exists) {
             plugin.getLogger().info("Found world file for " + name + ", loading...");
@@ -108,10 +109,10 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
             return null;
         }
 
-        var creator = new WorldCreator(name);
-
         if (limbo) {
-            creator.generator("librelogin:void");
+            // Pass the generator directly. A "<plugin>:void" lookup depends on the plugin name,
+            // which is LibreLoginX, so "librelogin:void" silently fell back to vanilla terrain.
+            creator.generator(new VoidWorldGenerator());
         }
 
         world = Bukkit.createWorld(creator);
@@ -148,6 +149,28 @@ public class PaperPlatformHandle implements PlatformHandle<Player, World> {
         }
 
         return world;
+    }
+
+    /**
+     * Checks whether a world's data is already on disk. Paper 26.1+ stores extra worlds as
+     * dimensions of the main level ({@code world/dimensions/<namespace>/<key>}); older versions
+     * (and unconverted worlds that Paper migrates on load) use {@code <world-container>/<name>}.
+     */
+    private static boolean worldDataExists(WorldCreator creator) {
+        if (new File(Bukkit.getWorldContainer(), creator.name()).exists()) return true;
+
+        try {
+            var key = creator.key();
+            return Files.isDirectory(
+                    Bukkit.getServer()
+                            .getLevelDirectory()
+                            .resolve("dimensions")
+                            .resolve(key.getNamespace())
+                            .resolve(key.getKey()));
+        } catch (LinkageError ignored) {
+            // Server#getLevelDirectory does not exist before 26.1
+            return false;
+        }
     }
 
     @Override

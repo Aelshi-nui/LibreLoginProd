@@ -32,6 +32,9 @@ public class AuthenticSQLiteDatabaseConnector
         hikariConfig.setPoolName("LibreLogin SQLite Pool");
         hikariConfig.setDriverClassName("org.sqlite.JDBC");
         hikariConfig.setMaxLifetime(60000);
+        // Hikari's default keepaliveTime (2 min) is >= maxLifetime, so Hikari would disable it
+        // anyway and log a warning. Keepalive is meaningless for a local SQLite file.
+        hikariConfig.setKeepaliveTime(0);
         hikariConfig.addDataSourceProperty("cachePrepStmts", "true");
         hikariConfig.addDataSourceProperty("prepStmtCacheSize", "250");
         hikariConfig.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
