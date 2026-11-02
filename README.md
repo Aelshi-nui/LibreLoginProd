@@ -43,8 +43,8 @@ alt="Contributors listed"></img>
 
 ## Platforms ⚙️
 - [✔️] Velocity - up to 1.21.11
-- [✔️] Paper - up to 26.1.2
-- [✔️] Folia - up to 26.1.2
+- [✔️] Paper - up to 26.2
+- [✔️] Folia - up to 26.2
 - [❌] BungeeCord - no longer supported, do not use it for production
 
 ## Main changes 
