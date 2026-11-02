@@ -6,7 +6,7 @@ LibreLogin did not meet our expectations, which is why this fork was created.</p
 
 # About
 
-LibreLoginX is a production-ready authentication plugin for Minecraft servers. It handles premium (paid) player auto-login, session management, and Bedrock (Geyser/Floodgate) support. Built as a fork of LibreLogin with fixes for modern Minecraft versions including Paper/Folia 26.1.2.
+LibreLoginX is a production-ready authentication plugin for Minecraft servers. It handles premium (paid) player auto-login, session management, and Bedrock (Geyser/Floodgate) support. Built as a fork of LibreLogin with fixes for modern Minecraft versions including Paper/Folia 26.2.
 
 ## Implementation
 
